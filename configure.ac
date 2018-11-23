@@ -134,6 +134,8 @@ fi
 AC_CHECK_DECLS([TIOCSRS485], [], [], [[#include <sys/ioctl.h>]])
 # Check for RTS flags
 AC_CHECK_DECLS([TIOCM_RTS], [], [], [[#include <sys/ioctl.h>]])
+# Check for exclusive serial access
+AC_CHECK_DECLS([TIOCEXCL], [], [], [[#include <sys/ioctl.h>]])
 
 # Wtype-limits is not supported by gcc 4.2 (default on recent Mac OS X)
 my_CFLAGS="-Wall \

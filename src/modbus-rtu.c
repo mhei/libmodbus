@@ -19,7 +19,7 @@
 #include "modbus-rtu.h"
 #include "modbus-rtu-private.h"
 
-#if HAVE_DECL_TIOCSRS485 || HAVE_DECL_TIOCM_RTS
+#if HAVE_DECL_TIOCSRS485 || HAVE_DECL_TIOCM_RTS || HAVE_DECL_TIOCEXCL
 #include <sys/ioctl.h>
 #endif
 
@@ -648,6 +648,14 @@ static int _modbus_rtu_connect(modbus_t *ctx)
         }
         return -1;
     }
+
+#ifdef TIOCEXCL
+    if (ioctl(ctx->s, TIOCEXCL, NULL) < 0) {
+        close(ctx->s);
+        ctx->s = -1;
+        return -1;
+    }
+#endif
 
     /* Save */
     tcgetattr(ctx->s, &ctx_rtu->old_tios);
