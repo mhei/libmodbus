@@ -365,18 +365,29 @@ static ssize_t _modbus_rtu_send(modbus_t *ctx, const uint8_t *req, int req_lengt
     if (ctx_rtu->is_echo_suppressing && write_size > 0) {
         uint8_t req_echo[MODBUS_RTU_MAX_ADU_LENGTH];
         ssize_t read_size = 0;
+        struct timeval tv;
+        fd_set rset;
+
+        /* Add a file descriptor to the set */
+        FD_ZERO(&rset);
+        FD_SET(ctx->s, &rset);
+
+        tv.tv_sec = ctx->byte_timeout.tv_sec;
+        tv.tv_usec = ctx->byte_timeout.tv_usec;
 
         while (read_size < write_size) {
-            ssize_t count = read(ctx->s, &req_echo[read_size], write_size - read_size);
+            ssize_t count;
+
+            if (_modbus_rtu_select(ctx, &rset, &tv, 1) <= 0)
+                return -1;
+
+            count = read(ctx->s, req_echo, write_size);
 
             /* return immediately on error */
             if (count < 0) {
                 return -1;
             }
 
-            /* 'c' can also be zero - which usually indicates EOF - but this means
-             * in our case here that the echo-ed bytes are not yet available for reading
-             * back. We do busy waiting here to dispatch them as fast as possible. */
             read_size += count;
         }
 
