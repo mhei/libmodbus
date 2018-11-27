@@ -775,6 +775,9 @@ static int _modbus_rtu_connect(modbus_t *ctx)
     /* Set the baud rate */
     if ((cfsetispeed(&tios, speed) < 0) ||
         (cfsetospeed(&tios, speed) < 0)) {
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL, NULL);
+#endif
         close(ctx->s);
         ctx->s = -1;
         return -1;
@@ -949,6 +952,9 @@ static int _modbus_rtu_connect(modbus_t *ctx)
     tios.c_cc[VTIME] = 0;
 
     if (tcsetattr(ctx->s, TCSANOW, &tios) < 0) {
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL, NULL);
+#endif
         close(ctx->s);
         ctx->s = -1;
         return -1;
@@ -1224,6 +1230,9 @@ static void _modbus_rtu_close(modbus_t *ctx)
 #else
     if (ctx->s != -1) {
         tcsetattr(ctx->s, TCSANOW, &ctx_rtu->old_tios);
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL, NULL);
+#endif
         close(ctx->s);
         ctx->s = -1;
     }
