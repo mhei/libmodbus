@@ -232,6 +232,25 @@ static int win32_ser_select(struct win32_ser *ws, int max_len,
     }
 }
 
+static int win32_ser_read(struct win32_ser *ws, uint8_t *p_msg,
+                          unsigned int max_len)
+{
+    unsigned int n = ws->n_bytes;
+
+    if (max_len < n) {
+        n = max_len;
+    }
+
+    if (n > 0) {
+        memcpy(p_msg, ws->buf, n);
+    }
+
+    ws->n_bytes -= n;
+
+    return n;
+}
+#endif
+
 static int _modbus_rtu_select(modbus_t *ctx, fd_set *rset,
                               struct timeval *tv, int length_to_read)
 {
@@ -270,25 +289,6 @@ static int _modbus_rtu_select(modbus_t *ctx, fd_set *rset,
 
     return s_rc;
 }
-
-static int win32_ser_read(struct win32_ser *ws, uint8_t *p_msg,
-                          unsigned int max_len)
-{
-    unsigned int n = ws->n_bytes;
-
-    if (max_len < n) {
-        n = max_len;
-    }
-
-    if (n > 0) {
-        memcpy(p_msg, ws->buf, n);
-    }
-
-    ws->n_bytes -= n;
-
-    return n;
-}
-#endif
 
 #if HAVE_DECL_TIOCM_RTS
 static void _modbus_rtu_ioctl_rts(modbus_t *ctx, int on)
