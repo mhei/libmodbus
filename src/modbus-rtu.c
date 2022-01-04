@@ -381,7 +381,7 @@ static ssize_t _modbus_rtu_send(modbus_t *ctx, const uint8_t *req, int req_lengt
             if (_modbus_rtu_select(ctx, &rset, &tv, 1) <= 0)
                 return -1;
 
-            count = read(ctx->s, req_echo, write_size);
+            count = read(ctx->s, &req_echo[read_size], write_size - read_size);
 
             /* return immediately on error */
             if (count < 0) {
