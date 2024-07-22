@@ -236,6 +236,45 @@ static int win32_ser_read(struct win32_ser *ws, uint8_t *p_msg, unsigned int max
 }
 #endif
 
+static int
+_modbus_rtu_select(modbus_t *ctx, fd_set *rset, struct timeval *tv, int length_to_read)
+{
+    int s_rc;
+#if defined(_WIN32)
+    s_rc = win32_ser_select(
+        &((modbus_rtu_t *) ctx->backend_data)->w_ser, length_to_read, tv);
+    if (s_rc == 0) {
+        errno = ETIMEDOUT;
+        return -1;
+    }
+
+    if (s_rc < 0) {
+        return -1;
+    }
+#else
+    while ((s_rc = select(ctx->s + 1, rset, NULL, NULL, tv)) == -1) {
+        if (errno == EINTR) {
+            if (ctx->debug) {
+                fprintf(stderr, "A non blocked signal was caught\n");
+            }
+            /* Necessary after an error */
+            FD_ZERO(rset);
+            FD_SET(ctx->s, rset);
+        } else {
+            return -1;
+        }
+    }
+
+    if (s_rc == 0) {
+        /* Timeout */
+        errno = ETIMEDOUT;
+        return -1;
+    }
+#endif
+
+    return s_rc;
+}
+
 #if HAVE_DECL_TIOCM_RTS
 static void _modbus_rtu_ioctl_rts(modbus_t *ctx, int on)
 {
@@ -1127,45 +1166,6 @@ static int _modbus_rtu_flush(modbus_t *ctx)
 #else
     return tcflush(ctx->s, TCIOFLUSH);
 #endif
-}
-
-static int
-_modbus_rtu_select(modbus_t *ctx, fd_set *rset, struct timeval *tv, int length_to_read)
-{
-    int s_rc;
-#if defined(_WIN32)
-    s_rc = win32_ser_select(
-        &((modbus_rtu_t *) ctx->backend_data)->w_ser, length_to_read, tv);
-    if (s_rc == 0) {
-        errno = ETIMEDOUT;
-        return -1;
-    }
-
-    if (s_rc < 0) {
-        return -1;
-    }
-#else
-    while ((s_rc = select(ctx->s + 1, rset, NULL, NULL, tv)) == -1) {
-        if (errno == EINTR) {
-            if (ctx->debug) {
-                fprintf(stderr, "A non blocked signal was caught\n");
-            }
-            /* Necessary after an error */
-            FD_ZERO(rset);
-            FD_SET(ctx->s, rset);
-        } else {
-            return -1;
-        }
-    }
-
-    if (s_rc == 0) {
-        /* Timeout */
-        errno = ETIMEDOUT;
-        return -1;
-    }
-#endif
-
-    return s_rc;
 }
 
 static void _modbus_rtu_free(modbus_t *ctx)
