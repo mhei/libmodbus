@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -296,34 +297,98 @@ static ssize_t _modbus_rtu_send(modbus_t *ctx, const uint8_t *req, int req_lengt
 #if defined(_WIN32)
     modbus_rtu_t *ctx_rtu = ctx->backend_data;
     DWORD n_bytes = 0;
-    return (WriteFile(ctx_rtu->w_ser.fd, req, req_length, &n_bytes, NULL))
-               ? (ssize_t) n_bytes
-               : -1;
-#else
-#if HAVE_DECL_TIOCM_RTS
-    modbus_rtu_t *ctx_rtu = ctx->backend_data;
-    if (ctx_rtu->rts != MODBUS_RTU_RTS_NONE) {
-        ssize_t size;
+    ssize_t rv;
 
+    rv = (WriteFile(ctx_rtu->w_ser.fd, req, req_length, &n_bytes, NULL))
+               ? (ssize_t)n_bytes
+               : -1;
+
+    /* if local echo workaround is enabled, try to discard the count of bytes
+     *  we sent ourself */
+    if (ctx_rtu->is_echo_suppressing && n_bytes > 0) {
+        /* we don't use a timeout here since we should have our own caused stuff returned
+         * immediately - and we know the internals of win32_ser_select from code above */
+        if (win32_ser_select(&ctx_rtu->w_ser, (int)n_bytes, NULL) <= 0) {
+             /* propagate errors and timeouts */
+             return -1;
+        } else {
+             /* discard the count of bytes we caused ourself, but keep possible bytes
+              * of following packet we already received */
+             unsigned int n = ctx_rtu->w_ser.n_bytes;
+
+             if (n > (unsigned int)n_bytes) {
+                 n = (unsigned int)n_bytes;
+             }
+
+             ctx_rtu->w_ser.n_bytes -= n;
+        }
+    }
+
+    return rv;
+#else
+    modbus_rtu_t *ctx_rtu = ctx->backend_data;
+    ssize_t write_size;
+
+#if HAVE_DECL_TIOCM_RTS
+    if (ctx_rtu->rts != MODBUS_RTU_RTS_NONE) {
         if (ctx->debug) {
             fprintf(stderr, "Sending request using RTS signal\n");
         }
 
         ctx_rtu->set_rts(ctx, ctx_rtu->rts == MODBUS_RTU_RTS_UP);
         usleep(ctx_rtu->rts_delay);
-
-        size = write(ctx->s, req, req_length);
-
-        usleep(ctx_rtu->onebyte_time * req_length + ctx_rtu->rts_delay);
-        ctx_rtu->set_rts(ctx, ctx_rtu->rts != MODBUS_RTU_RTS_UP);
-
-        return size;
-    } else {
-#endif
-        return write(ctx->s, req, req_length);
-#if HAVE_DECL_TIOCM_RTS
     }
 #endif
+
+    write_size = write(ctx->s, req, req_length);
+
+#if HAVE_DECL_TIOCM_RTS
+    if (ctx_rtu->rts != MODBUS_RTU_RTS_NONE) {
+        usleep(ctx_rtu->onebyte_time * req_length + ctx_rtu->rts_delay);
+        ctx_rtu->set_rts(ctx, ctx_rtu->rts != MODBUS_RTU_RTS_UP);
+    }
+#endif
+
+    /* if local echo workaround is enabled, try to discard the count of bytes
+     * we sent ourself */
+    if (ctx_rtu->is_echo_suppressing && write_size > 0) {
+        uint8_t req_echo[MODBUS_RTU_MAX_ADU_LENGTH];
+        ssize_t read_size = 0;
+        struct timeval tv;
+        fd_set rset;
+
+        /* add the file descriptor to the set for timeout handling */
+        FD_ZERO(&rset);
+        FD_SET(ctx->s, &rset);
+
+        tv.tv_sec = ctx->byte_timeout.tv_sec;
+        tv.tv_usec = ctx->byte_timeout.tv_usec;
+
+        while (read_size < write_size) {
+            ssize_t count;
+
+            if (_modbus_rtu_select(ctx, &rset, &tv, 1) <= 0)
+                return -1;
+
+            count = read(ctx->s, &req_echo[read_size], write_size - read_size);
+
+            /* return immediately on error */
+            if (count < 0) {
+                return -1;
+            }
+
+            read_size += count;
+        }
+
+        /* compare packet sent out and echo read back: if both differ we know that
+         * the packet was stumbled and receiver will probably ignore it */
+        if (memcmp(req, req_echo, write_size) != 0) {
+            errno = EIO;
+            return -1;
+        }
+    }
+
+    return write_size;
 #endif
 }
 
@@ -1130,6 +1195,39 @@ int modbus_rtu_set_rts_delay(modbus_t *ctx, int us)
     }
 }
 
+int modbus_rtu_set_suppress_echo(modbus_t *ctx, bool on)
+{
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (ctx->backend->backend_type == _MODBUS_BACKEND_TYPE_RTU) {
+        modbus_rtu_t *ctx_rtu = ctx->backend_data;
+        ctx_rtu->is_echo_suppressing = on;
+        return 0;
+    } else {
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+int modbus_rtu_get_suppress_echo(modbus_t *ctx)
+{
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (ctx->backend->backend_type == _MODBUS_BACKEND_TYPE_RTU) {
+        modbus_rtu_t *ctx_rtu;
+        ctx_rtu = (modbus_rtu_t *)ctx->backend_data;
+        return ctx_rtu->is_echo_suppressing;
+    } else {
+        return FALSE;
+    }
+}
+
 static void _modbus_rtu_close(modbus_t *ctx)
 {
     /* Restore line settings and close file descriptor in RTU mode */
@@ -1285,6 +1383,7 @@ modbus_new_rtu(const char *device, int baud, char parity, int data_bit, int stop
 #endif
 
     ctx_rtu->confirmation_to_ignore = FALSE;
+    ctx_rtu->is_echo_suppressing = FALSE;
 
     return ctx;
 }
