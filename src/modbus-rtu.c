@@ -19,7 +19,7 @@
 #include "modbus-rtu-private.h"
 #include "modbus-rtu.h"
 
-#if HAVE_DECL_TIOCSRS485 || HAVE_DECL_TIOCM_RTS
+#if HAVE_DECL_TIOCSRS485 || HAVE_DECL_TIOCM_RTS || HAVE_DECL_TIOCEXCL
 #include <sys/ioctl.h>
 #endif
 
@@ -761,6 +761,14 @@ static int _modbus_rtu_connect(modbus_t *ctx)
         return -1;
     }
 
+#ifdef TIOCEXCL
+    if (ioctl(ctx->s, TIOCEXCL) < 0) {
+        close(ctx->s);
+        ctx->s = -1;
+        return -1;
+    }
+#endif
+
     /* Save */
     tcgetattr(ctx->s, &ctx_rtu->old_tios);
 
@@ -785,6 +793,9 @@ static int _modbus_rtu_connect(modbus_t *ctx)
     }
 
     if ((cfsetispeed(&tios, speed) < 0) || (cfsetospeed(&tios, speed) < 0)) {
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL);
+#endif
         close(ctx->s);
         ctx->s = -1;
         return -1;
@@ -959,6 +970,9 @@ static int _modbus_rtu_connect(modbus_t *ctx)
     tios.c_cc[VTIME] = 0;
 
     if (tcsetattr(ctx->s, TCSANOW, &tios) < 0) {
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL);
+#endif
         close(ctx->s);
         ctx->s = -1;
         return -1;
@@ -1249,6 +1263,9 @@ static void _modbus_rtu_close(modbus_t *ctx)
 #else
     if (ctx->s >= 0) {
         tcsetattr(ctx->s, TCSANOW, &ctx_rtu->old_tios);
+#ifdef TIOCEXCL
+        ioctl(ctx->s, TIOCNXCL);
+#endif
         close(ctx->s);
         ctx->s = -1;
     }
