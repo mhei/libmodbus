@@ -13,7 +13,7 @@
 #
 m4_define([libmodbus_version_major], [3])
 m4_define([libmodbus_version_minor], [1])
-m4_define([libmodbus_version_micro], [7])
+m4_define([libmodbus_version_micro], [10])
 
 m4_define([libmodbus_release_status],
     [m4_if(m4_eval(libmodbus_version_minor % 2), [1], [snapshot], [release])])
@@ -59,6 +59,7 @@ AC_CANONICAL_HOST
 os_win32="false"
 os_cygwin="false"
 os_qnx="false"
+os_sunos="false"
 case "${host_os}" in
       *mingw32*)
     os_win32="true"
@@ -69,11 +70,16 @@ case "${host_os}" in
       *cygwin*)
     os_cygwin="true"
   ;;
+      *solaris*)
+    os_sunos="true"
+  ;;
 esac
 AM_CONDITIONAL(OS_WIN32, test "$os_win32" = "true")
 AM_CONDITIONAL(OS_QNX, test "$os_qnx" = "true")
 
+m4_pattern_forbid([^LT_INIT])dnl
 LT_INIT([disable-static win32-dll pic-only])
+
 AC_CHECK_HEADERS([ \
     arpa/inet.h \
     byteswap.h \
@@ -83,6 +89,7 @@ AC_CHECK_HEADERS([ \
     linux/serial.h \
     netdb.h \
     netinet/in.h \
+    netinet/ip.h \
     netinet/tcp.h \
     sys/ioctl.h \
     sys/params.h \
@@ -94,15 +101,15 @@ AC_CHECK_HEADERS([ \
     unistd.h \
 ])
 
-# Check whether to build docs / install man pages
-AC_LIBMODBUS_CHECK_BUILD_DOC
-
 # Cygwin defines IPTOS_LOWDELAY but can't handle that flag so it's necessary to
 # workaround that problem and Cygwin doesn't define MSG_DONTWAIT.
 AC_CHECK_DECLS([__CYGWIN__])
 
+# Check for network function in libnetwork for Haiku
+AC_SEARCH_LIBS(accept, network socket)
+
 # Checks for library functions.
-AC_CHECK_FUNCS([accept4 getaddrinfo gettimeofday inet_ntoa select socket strerror strlcpy])
+AC_CHECK_FUNCS([accept4 gai_strerror getaddrinfo gettimeofday inet_pton inet_ntop select socket strerror strlcpy])
 
 # Required for MinGW with GCC v4.8.1 on Win7
 AC_DEFINE(WINVER, 0x0501, _)
@@ -128,6 +135,11 @@ if test "$os_cygwin" = "false"; then
         LIBS="$LIBS -lws2_32"
     AC_SUBST(LIBS)
     fi
+fi
+
+if test "$os_sunos" = "true"; then
+    LIBS="$LIBS -lnsl -lsocket"
+    AC_SUBST(LIBS)
 fi
 
 # Check for RS485 support (Linux kernel version 2.6.28+)
@@ -160,7 +172,6 @@ AC_CONFIG_FILES([
         src/modbus-version.h
         src/win32/modbus.dll.manifest
         tests/Makefile
-        doc/Makefile
         libmodbus.pc
 ])
 
@@ -178,6 +189,5 @@ AC_MSG_RESULT([
         cflags:                 ${CFLAGS}
         ldflags:                ${LDFLAGS}
 
-        documentation:          ${ac_libmodbus_build_doc}
         tests:                  ${enable_tests}
 ])
