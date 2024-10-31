@@ -13,7 +13,7 @@
 #
 m4_define([libmodbus_version_major], [3])
 m4_define([libmodbus_version_minor], [1])
-m4_define([libmodbus_version_micro], [10])
+m4_define([libmodbus_version_micro], [11])
 
 m4_define([libmodbus_release_status],
     [m4_if(m4_eval(libmodbus_version_minor % 2), [1], [snapshot], [release])])
@@ -29,7 +29,7 @@ AC_INIT([libmodbus],
         [http://libmodbus.org/])
 AC_CONFIG_SRCDIR([src/modbus.c])
 AC_CONFIG_AUX_DIR([build-aux])
-AM_INIT_AUTOMAKE([check-news foreign 1.11 -Wall -Wno-portability silent-rules tar-pax subdir-objects])
+AM_INIT_AUTOMAKE([check-news foreign 1.11 silent-rules tar-pax subdir-objects])
 AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
@@ -149,14 +149,13 @@ AC_CHECK_DECLS([TIOCM_RTS], [], [], [[#include <sys/ioctl.h>]])
 # Check for exclusive serial access
 AC_CHECK_DECLS([TIOCEXCL], [], [], [[#include <sys/ioctl.h>]])
 
-# Wtype-limits is not supported by gcc 4.2 (default on recent Mac OS X)
-my_CFLAGS="-Wall \
+WARNING_CFLAGS="-Wall \
 -Wmissing-declarations -Wmissing-prototypes \
 -Wnested-externs -Wpointer-arith \
--Wpointer-arith -Wsign-compare -Wchar-subscripts \
+-Wsign-compare -Wchar-subscripts \
 -Wstrict-prototypes -Wshadow \
 -Wformat-security"
-AC_SUBST([my_CFLAGS])
+AC_SUBST([WARNING_CFLAGS])
 
 # Build options
 AC_ARG_ENABLE(tests,
@@ -175,6 +174,20 @@ AC_CONFIG_FILES([
         libmodbus.pc
 ])
 
+AC_ARG_ENABLE([debug],
+  [AS_HELP_STRING([--enable-debug],
+    [Enable debug symbols (default is no)])],
+  [enable_debug=$enableval],
+  [enable_debug=no])
+
+AS_IF([test "x$enable_debug" = "xyes"], [
+  CFLAGS="-g -O0"
+  CXXFLAGS="-g -O0"
+], [
+  CFLAGS="-O2"
+  CXXFLAGS="-O2"
+])
+
 AC_OUTPUT
 AC_MSG_RESULT([
         $PACKAGE $VERSION
@@ -186,7 +199,7 @@ AC_MSG_RESULT([
         includedir:             ${includedir}
 
         compiler:               ${CC}
-        cflags:                 ${CFLAGS}
+        cflags:                 ${CFLAGS} ${WARNING_CFLAGS}
         ldflags:                ${LDFLAGS}
 
         tests:                  ${enable_tests}

@@ -323,30 +323,30 @@ int main(int argc, char *argv[])
     /** FLOAT **/
     printf("1/4 Set/get float ABCD: ");
     modbus_set_float_abcd(UT_REAL, tab_rp_registers);
-    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_ABCD_SET, 4),
+    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_ABCD, 4),
                 "FAILED Set float ABCD");
-    real = modbus_get_float_abcd(UT_IREAL_ABCD_GET);
+    real = modbus_get_float_abcd(UT_IREAL_ABCD);
     ASSERT_TRUE(real == UT_REAL, "FAILED (%f != %f)\n", real, UT_REAL);
 
     printf("2/4 Set/get float DCBA: ");
     modbus_set_float_dcba(UT_REAL, tab_rp_registers);
-    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_DCBA_SET, 4),
+    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_DCBA, 4),
                 "FAILED Set float DCBA");
-    real = modbus_get_float_dcba(UT_IREAL_DCBA_GET);
+    real = modbus_get_float_dcba(UT_IREAL_DCBA);
     ASSERT_TRUE(real == UT_REAL, "FAILED (%f != %f)\n", real, UT_REAL);
 
     printf("3/4 Set/get float BADC: ");
     modbus_set_float_badc(UT_REAL, tab_rp_registers);
-    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_BADC_SET, 4),
+    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_BADC, 4),
                 "FAILED Set float BADC");
-    real = modbus_get_float_badc(UT_IREAL_BADC_GET);
+    real = modbus_get_float_badc(UT_IREAL_BADC);
     ASSERT_TRUE(real == UT_REAL, "FAILED (%f != %f)\n", real, UT_REAL);
 
     printf("4/4 Set/get float CDAB: ");
     modbus_set_float_cdab(UT_REAL, tab_rp_registers);
-    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_CDAB_SET, 4),
+    ASSERT_TRUE(is_memory_equal(tab_rp_registers, UT_IREAL_CDAB, 4),
                 "FAILED Set float CDAB");
-    real = modbus_get_float_cdab(UT_IREAL_CDAB_GET);
+    real = modbus_get_float_cdab(UT_IREAL_CDAB);
     ASSERT_TRUE(real == UT_REAL, "FAILED (%f != %f)\n", real, UT_REAL);
 
     printf("\nAt this point, error messages doesn't mean the test has failed\n");
@@ -401,11 +401,11 @@ int main(int argc, char *argv[])
     ASSERT_TRUE(rc == -1 && errno == EMBXILADD, "");
 
     rc = modbus_write_bits(ctx, 0, 1, tab_rp_bits);
-    printf("* modbus_write_coils (0): ");
+    printf("* modbus_write_bits (0): ");
     ASSERT_TRUE(rc == -1 && errno == EMBXILADD, "");
 
     rc = modbus_write_bits(ctx, UT_BITS_ADDRESS + UT_BITS_NB, UT_BITS_NB, tab_rp_bits);
-    printf("* modbus_write_coils (max): ");
+    printf("* modbus_write_bits (max): ");
     ASSERT_TRUE(rc == -1 && errno == EMBXILADD, "");
 
     rc = modbus_write_register(ctx, 0, tab_rp_registers[0]);
@@ -499,7 +499,16 @@ int main(int argc, char *argv[])
 
     modbus_disable_quirks(ctx, MODBUS_QUIRK_MAX_SLAVE);
     rc = modbus_set_slave(ctx, old_slave);
-    ASSERT_TRUE(rc == 0, "Uanble to restore slave value")
+    ASSERT_TRUE(rc == 0, "Unable to restore slave value")
+
+    /** BAD USE OF REPLY FUNCTION **/
+    rc = modbus_write_bit(ctx, UT_BITS_ADDRESS_INVALID_REQUEST_LENGTH, ON);
+    printf("* modbus_write_bit (triggers invalid reply): ");
+    ASSERT_TRUE(rc == -1 && errno == EMBXILVAL, "");
+
+    rc = modbus_write_register(ctx, UT_REGISTERS_ADDRESS_SPECIAL, 0x42);
+    printf("* modbus_write_register (triggers invalid reply): ");
+    ASSERT_TRUE(rc == -1 && errno == EMBXILVAL, "");
 
     /** SLAVE REPLY **/
 

@@ -16,6 +16,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
 #include <string.h>
 #include <errno.h>
 #ifndef _MSC_VER
@@ -40,8 +42,12 @@
 # include <netinet/in_systm.h>
 #endif
 
-# include <netinet/in.h>
-# include <netinet/ip.h>
+#ifdef HAVE_NETINET_IN_H
+#include <netinet/in.h>
+#endif /* HAVE_NETINET_IN_H */
+#ifdef HAVE_NETINET_IP_H
+#include <netinet/ip.h>
+#endif /* HAVE_NETINET_IP_H */
 # include <netinet/tcp.h>
 # include <arpa/inet.h>
 # include <netdb.h>
@@ -151,7 +157,7 @@ static int _modbus_tcp_build_response_basis(sft_t *sft, uint8_t *rsp)
     return _MODBUS_TCP_PRESET_RSP_LENGTH;
 }
 
-static int _modbus_tcp_prepare_response_tid(const uint8_t *req, int *req_length)
+static int _modbus_tcp_get_response_tid(const uint8_t *req)
 {
     return (req[0] << 8) + req[1];
 }
@@ -478,7 +484,9 @@ static void _modbus_tcp_close(modbus_t *ctx)
 static int _modbus_tcp_flush(modbus_t *ctx)
 {
     int rc;
-    int rc_sum = 0;
+    // Use an unsigned 16-bit integer to reduce overflow risk. The flush function
+    // is not expected to handle huge amounts of data (> 2GB).
+    uint16_t rc_sum = 0;
 
     do {
         /* Extract the garbage from the socket */
@@ -505,7 +513,15 @@ static int _modbus_tcp_flush(modbus_t *ctx)
         }
 #endif
         if (rc > 0) {
-            rc_sum += rc;
+            // Check for overflow before adding
+            if (rc_sum <= UINT16_MAX - rc) {
+                rc_sum += rc;
+            } else {
+                // Handle overflow
+                ctx->error_recovery = MODBUS_ERROR_RECOVERY_PROTOCOL;
+                errno = EOVERFLOW;
+                return -1;
+            }
         }
     } while (rc == MODBUS_TCP_MAX_ADU_LENGTH);
 
@@ -826,7 +842,7 @@ const modbus_backend_t _modbus_tcp_backend = {
     _modbus_set_slave,
     _modbus_tcp_build_request_basis,
     _modbus_tcp_build_response_basis,
-    _modbus_tcp_prepare_response_tid,
+    _modbus_tcp_get_response_tid,
     _modbus_tcp_send_msg_pre,
     _modbus_tcp_send,
     _modbus_tcp_receive,
@@ -849,7 +865,7 @@ const modbus_backend_t _modbus_tcp_pi_backend = {
     _modbus_set_slave,
     _modbus_tcp_build_request_basis,
     _modbus_tcp_build_response_basis,
-    _modbus_tcp_prepare_response_tid,
+    _modbus_tcp_get_response_tid,
     _modbus_tcp_send_msg_pre,
     _modbus_tcp_send,
     _modbus_tcp_receive,

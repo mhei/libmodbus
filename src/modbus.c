@@ -125,7 +125,7 @@ int modbus_flush(modbus_t *ctx)
     return rc;
 }
 
-/* Computes the length of the expected response */
+/* Computes the length of the expected response including checksum */
 static unsigned int compute_response_length_from_request(modbus_t *ctx, uint8_t *req)
 {
     int length;
@@ -394,8 +394,7 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
     length_to_read = ctx->backend->header_length + 1;
 
     if (msg_type == MSG_INDICATION) {
-        /* Wait for a message, we don't know when the message will be
-         * received */
+        /* Wait for a message, we don't know when the message will be received */
         if (ctx->indication_timeout.tv_sec == 0 && ctx->indication_timeout.tv_usec == 0) {
             /* By default, the indication timeout isn't set */
             p_tv = NULL;
@@ -805,7 +804,7 @@ int modbus_reply(modbus_t *ctx,
 
     sft.slave = slave;
     sft.function = function;
-    sft.t_id = ctx->backend->prepare_response_tid(req, &req_length);
+    sft.t_id = ctx->backend->get_response_tid(req);
 
     /* Data are flushed on illegal number of values errors. */
     switch (function) {
@@ -901,26 +900,46 @@ int modbus_reply(modbus_t *ctx,
                                             MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS,
                                             rsp,
                                             FALSE,
-                                            "Illegal data address 0x%0X in write_bit\n",
+                                            "Illegal data address 0x%0X in write bit\n",
                                             address);
-        } else {
-            int data = (req[offset + 3] << 8) + req[offset + 4];
+            break;
+        }
 
-            if (data == 0xFF00 || data == 0x0) {
-                mb_mapping->tab_bits[mapping_address] = data ? ON : OFF;
-                memcpy(rsp, req, req_length);
-                rsp_length = req_length;
-            } else {
-                rsp_length = response_exception(
-                    ctx,
-                    &sft,
-                    MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE,
-                    rsp,
-                    FALSE,
-                    "Illegal data value 0x%0X in write_bit request at address %0X\n",
-                    data,
-                    address);
-            }
+        /* This check is only done here to ensure using memcpy is safe. */
+        rsp_length = compute_response_length_from_request(ctx, (uint8_t *) req);
+        if (rsp_length != req_length) {
+            /* Bad use of modbus_reply */
+            rsp_length = response_exception(
+                ctx,
+                &sft,
+                MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE,
+                rsp,
+                FALSE,
+                "Invalid request length in modbus_reply to write bit (%d)\n",
+                req_length);
+            break;
+        }
+
+        /* Don't copy the CRC, if any, it will be computed later (even if identical to the
+         * request) */
+        rsp_length -= ctx->backend->checksum_length;
+
+        int data = (req[offset + 3] << 8) + req[offset + 4];
+        if (data == 0xFF00 || data == 0x0) {
+            /* Apply the change to mapping */
+            mb_mapping->tab_bits[mapping_address] = data ? ON : OFF;
+            /* Prepare response */
+            memcpy(rsp, req, rsp_length);
+        } else {
+            rsp_length = response_exception(
+                ctx,
+                &sft,
+                MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE,
+                rsp,
+                FALSE,
+                "Illegal data value 0x%0X in write_bit request at address %0X\n",
+                data,
+                address);
         }
     } break;
     case MODBUS_FC_WRITE_SINGLE_REGISTER: {
@@ -935,13 +954,28 @@ int modbus_reply(modbus_t *ctx,
                                    FALSE,
                                    "Illegal data address 0x%0X in write_register\n",
                                    address);
-        } else {
-            int data = (req[offset + 3] << 8) + req[offset + 4];
-
-            mb_mapping->tab_registers[mapping_address] = data;
-            memcpy(rsp, req, req_length);
-            rsp_length = req_length;
+            break;
         }
+
+        rsp_length = compute_response_length_from_request(ctx, (uint8_t *) req);
+        if (rsp_length != req_length) {
+            /* Bad use of modbus_reply */
+            rsp_length = response_exception(
+                ctx,
+                &sft,
+                MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE,
+                rsp,
+                FALSE,
+                "Invalid request length in modbus_reply to write register (%d)\n",
+                req_length);
+            break;
+        }
+        int data = (req[offset + 3] << 8) + req[offset + 4];
+
+        mb_mapping->tab_registers[mapping_address] = data;
+
+        rsp_length -= ctx->backend->checksum_length;
+        memcpy(rsp, req, rsp_length);
     } break;
     case MODBUS_FC_WRITE_MULTIPLE_COILS: {
         int nb = (req[offset + 3] << 8) + req[offset + 4];
@@ -1061,8 +1095,23 @@ int modbus_reply(modbus_t *ctx,
 
             data = (data & and) | (or &(~and) );
             mb_mapping->tab_registers[mapping_address] = data;
-            memcpy(rsp, req, req_length);
-            rsp_length = req_length;
+
+            rsp_length = compute_response_length_from_request(ctx, (uint8_t *) req);
+            if (rsp_length != req_length) {
+                /* Bad use of modbus_reply */
+                rsp_length = response_exception(ctx,
+                                                &sft,
+                                                MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE,
+                                                rsp,
+                                                FALSE,
+                                                "Invalid request length in modbus_reply "
+                                                "to mask write register (%d)\n",
+                                                req_length);
+                break;
+            }
+
+            rsp_length -= ctx->backend->checksum_length;
+            memcpy(rsp, req, rsp_length);
         }
     } break;
     case MODBUS_FC_WRITE_AND_READ_REGISTERS: {
@@ -1133,8 +1182,8 @@ int modbus_reply(modbus_t *ctx,
         break;
     }
 
-    /* Suppress any responses in RTU when the request was a broadcast, excepted when quirk
-     * is enabled. */
+    /* Suppress any responses in RTU when the request was a broadcast, excepted when
+     * quirk is enabled. */
     if (ctx->backend->backend_type == _MODBUS_BACKEND_TYPE_RTU &&
         slave == MODBUS_BROADCAST_ADDRESS &&
         !(ctx->quirks & MODBUS_QUIRK_REPLY_TO_BROADCAST)) {
@@ -1150,7 +1199,6 @@ int modbus_reply_exception(modbus_t *ctx, const uint8_t *req, unsigned int excep
     int function;
     uint8_t rsp[MAX_MESSAGE_LENGTH];
     int rsp_length;
-    int dummy_length = 99;
     sft_t sft;
 
     if (ctx == NULL) {
@@ -1164,7 +1212,7 @@ int modbus_reply_exception(modbus_t *ctx, const uint8_t *req, unsigned int excep
 
     sft.slave = slave;
     sft.function = function + 0x80;
-    sft.t_id = ctx->backend->prepare_response_tid(req, &dummy_length);
+    sft.t_id = ctx->backend->get_response_tid(req);
     rsp_length = ctx->backend->build_response_basis(&sft, rsp);
 
     /* Positive exception code */
@@ -1830,7 +1878,8 @@ int modbus_set_byte_timeout(modbus_t *ctx, uint32_t to_sec, uint32_t to_usec)
     return 0;
 }
 
-/* Get the timeout interval used by the server to wait for an indication from a client */
+/* Get the timeout interval used by the server to wait for an indication from a client
+ */
 int modbus_get_indication_timeout(modbus_t *ctx, uint32_t *to_sec, uint32_t *to_usec)
 {
     if (ctx == NULL) {
